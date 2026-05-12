@@ -1,0 +1,367 @@
+<script>
+// ── Equipment Stats ─────────────────────────────────────────────────────────
+
+let _eqUtilChart = null;
+let _equipmentItems = [];
+let _facilityItems = [];
+
+async function loadEquipmentStats() {
+  try {
+    const utilData = await get("/api/stats/equipment-utilization");
+    renderUtilChart(utilData);
+  } catch (e) { /* non-critical, silently fail */ }
+}
+
+function renderUtilChart(data) {
+  const canvas = document.getElementById("eq-util-chart");
+  if (!canvas || !data.length) return;
+  if (_eqUtilChart) { _eqUtilChart.destroy(); _eqUtilChart = null; }
+  _eqUtilChart = new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: data.map(d => d.name),
+      datasets: [{
+        label: "Total Usage (hours)",
+        data: data.map(d => d.total_hours),
+        backgroundColor: "rgba(200,213,197,.9)",
+        borderColor: "#3e5148",
+        borderWidth: 1,
+        borderRadius: 4,
+      }],
+    },
+    options: {
+      indexAxis: "y",
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          beginAtZero: true,
+          grid: { color: "rgba(100,120,109,.16)" },
+          title: { display: true, text: "Hours", color: "#66766d" },
+          ticks: { color: "#66766d" },
+        },
+        y: {
+          grid: { color: "rgba(100,120,109,.10)" },
+          ticks: { font: { size: 12 }, color: "#66766d" },
+        },
+      },
+    },
+  });
+}
+
+// ── Equipment List ──────────────────────────────────────────────────────────
+
+async function loadEquipmentList() {
+  const wrap = document.getElementById("equipment-list-wrap");
+  if (!wrap) return;
+  showLoading(wrap);
+  try {
+    const [items, types] = await Promise.all([
+      get("/api/equipment"),
+      get("/api/equipment/types"),
+    ]);
+    const sel = document.getElementById("eq-type-filter");
+    if (sel) {
+      sel.innerHTML = `<option value="">All Types</option>` +
+        types.map(t => `<option value="${t.equipment_type_id}">${t.type_name}</option>`).join("");
+    }
+    _equipmentItems = items;
+    renderEquipmentTable(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+function renderEquipmentTable(items, wrap) {
+  if (!items.length) {
+    wrap.innerHTML = `<div class="empty-state"><p>No equipment found.</p></div>`;
+    return;
+  }
+  wrap.innerHTML = `
+    <div class="record-grid">
+      ${items.map(r => `
+        <button class="record-card" onclick="loadEquipmentDetail(${r.equipment_id})">
+          <div class="record-card-top">
+            <span class="record-id">#${r.equipment_id}</span>
+            ${statusBadge(r.status_name)}
+          </div>
+          <strong class="record-title">${r.name}</strong>
+          <div class="record-meta">
+            <span>${fmt(r.type_name)}</span>
+            <span>${fmt(r.facility_name)}</span>
+          </div>
+          <span class="record-action">View equipment</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+async function filterEquipment() {
+  const status = document.getElementById("eq-status-filter").value;
+  const type = document.getElementById("eq-type-filter").value;
+  const query = (document.getElementById("eq-name-search")?.value || "").trim().toLowerCase();
+  const wrap = document.getElementById("equipment-list-wrap");
+  showLoading(wrap);
+  try {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (type) params.set("type_id", type);
+    _equipmentItems = await get(`/api/equipment?${params}`);
+    const items = query
+      ? _equipmentItems.filter(r => (r.name || "").toLowerCase().includes(query))
+      : _equipmentItems;
+    renderEquipmentTable(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+async function loadEquipmentDetail(id) {
+  showEquipmentDetailView();
+  const panel = document.getElementById("equipment-detail-page");
+  panel.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;
+  try {
+    const r = await get(`/api/equipment/${id}`);
+    panel.innerHTML = `
+      <div class="detail-toolbar">
+        <button class="btn btn-secondary btn-sm" onclick="showEquipmentListView()">← Back to Equipment</button>
+        <div class="breadcrumb">Equipment / ${r.name}</div>
+      </div>
+      <div class="page-header flex-between">
+        <div>
+          <h1>${r.name}</h1>
+          <p>${fmt(r.type_name)} · ${statusBadge(r.status_name)}</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="openReallocateModal(${r.equipment_id}, '${r.name.replace(/'/g,"\\'")}')">
+          ⇄ Reallocate
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-title">Equipment Info</div>
+        <div class="detail-grid">
+          <div class="detail-field"><label>Facility</label><span>${fmt(r.facility_name)}</span></div>
+          <div class="detail-field"><label>Assigned Since</label><span>${fmtDate(r.assigned_since)}</span></div>
+          <div class="detail-field"><label>Requires Preparation</label><span>${r.requires_preparation ? "Yes" : "No"}</span></div>
+          <div class="detail-field"><label>Requires Oversight</label><span>${r.requires_oversight ? "Yes" : "No"}</span></div>
+        </div>
+        ${r.description ? `<p class="text-muted mt-8">${r.description}</p>` : ""}
+      </div>
+      <div class="card">
+        <div class="card-title">Usage Records (last 10)</div>
+        ${r.usage.length ? `
+          <table class="data-table">
+            <thead><tr><th>Start</th><th>End</th><th>Qty</th><th>Status</th><th>User</th></tr></thead>
+            <tbody>${r.usage.map(u => `<tr class="no-hover">
+              <td>${fmtDate(u.start_time)}</td><td>${fmtDate(u.end_time)}</td>
+              <td>${fmt(u.quantity)}</td><td>${statusBadge(u.usage_status)}</td>
+              <td>${fmt(u.user_name)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No usage records.</p>`}
+      </div>
+      <div class="card">
+        <div class="card-title">Maintenance Records (last 10)</div>
+        ${r.maintenance.length ? `
+          <table class="data-table">
+            <thead><tr><th>Type</th><th>Start</th><th>End</th><th>Scheduled</th><th>Technician</th></tr></thead>
+            <tbody>${r.maintenance.map(m => `<tr class="no-hover">
+              <td>${statusBadge(m.activity_type)}</td>
+              <td>${fmtDate(m.start_time)}</td><td>${fmtDate(m.end_time)}</td>
+              <td>${m.is_scheduled ? "Yes" : "No"}</td>
+              <td>${fmt(m.technician)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No maintenance records.</p>`}
+      </div>`;
+  } catch (e) { showError(panel, e.message); }
+}
+
+function showEquipmentDetailView() {
+  document.getElementById("equipment-list-page").style.display = "none";
+  document.getElementById("equipment-detail-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showEquipmentListView() {
+  document.getElementById("equipment-detail-page").style.display = "none";
+  document.getElementById("equipment-list-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ── Reallocate Modal ────────────────────────────────────────────────────────
+
+let _reallocateId = null;
+
+async function openReallocateModal(id, name) {
+  _reallocateId = id;
+  document.getElementById("reallocate-eq-name").textContent = name;
+  const sel = document.getElementById("reallocate-facility-sel");
+  sel.innerHTML = `<option value="">Loading…</option>`;
+  document.getElementById("reallocate-modal").classList.add("open");
+  try {
+    const facs = await get("/api/facilities");
+    sel.innerHTML = `<option value="">— Select Facility —</option>` +
+      facs.map(f => `<option value="${f.facility_id}">${f.name}</option>`).join("");
+  } catch (e) { sel.innerHTML = `<option>Error loading</option>`; }
+}
+
+function closeReallocateModal() {
+  document.getElementById("reallocate-modal").classList.remove("open");
+  _reallocateId = null;
+}
+
+async function submitReallocate() {
+  const fid = document.getElementById("reallocate-facility-sel").value;
+  if (!fid) return alert("Please select a facility.");
+  try {
+    await post(`/api/equipment/${_reallocateId}/reallocate`, { facility_id: parseInt(fid) });
+    closeReallocateModal();
+    loadEquipmentDetail(_reallocateId);
+    filterEquipment();
+    showToast("Equipment reallocated successfully.");
+  } catch (e) { alert("Error: " + e.message); }
+}
+
+// ── Facility ────────────────────────────────────────────────────────────────
+
+async function loadFacilityList() {
+  const wrap = document.getElementById("facility-list-wrap");
+  if (!wrap) return;
+  showLoading(wrap);
+  try {
+    const items = await get("/api/facilities");
+    _facilityItems = items;
+    populateFacilityStatusFilter(items);
+    renderFacilityCards(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+function filterFacilities() {
+  const query = (document.getElementById("facility-name-search")?.value || "").trim().toLowerCase();
+  const status = document.getElementById("facility-status-filter")?.value || "";
+  const wrap = document.getElementById("facility-list-wrap");
+  const items = _facilityItems.filter(r => {
+    const matchesName = !query || (r.name || "").toLowerCase().includes(query);
+    const matchesStatus = !status || r.status_name === status;
+    return matchesName && matchesStatus;
+  });
+  renderFacilityCards(items, wrap);
+}
+
+function populateFacilityStatusFilter(items) {
+  const sel = document.getElementById("facility-status-filter");
+  if (!sel) return;
+  const current = sel.value;
+  const statuses = [...new Set(items.map(r => r.status_name).filter(Boolean))].sort();
+  sel.innerHTML = `<option value="">All Statuses</option>` +
+    statuses.map(s => `<option value="${s}"${s === current ? " selected" : ""}>${s}</option>`).join("");
+}
+
+function renderFacilityCards(items, wrap) {
+  if (!items.length) { wrap.innerHTML = `<div class="empty-state"><p>No facilities found.</p></div>`; return; }
+  wrap.innerHTML = `
+    <div class="record-grid facility-grid">
+      ${items.map(r => `
+        <button class="record-card facility-card" onclick="loadFacilityDetail(${r.facility_id})">
+          <div class="record-card-top">
+            <span class="record-id">#${r.facility_id}</span>
+            ${statusBadge(r.status_name)}
+          </div>
+          <strong class="record-title">${r.name}</strong>
+          <div class="record-meta">
+            <span>${fmt(r.type_name)}</span>
+            <span>${fmt(r.purpose_name)}</span>
+          </div>
+          <p class="record-note">${fmt(r.address)}</p>
+          <span class="record-action">View facility</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+async function loadFacilityDetail(id) {
+  showFacilityDetailView();
+  const panel = document.getElementById("facility-detail-page");
+  panel.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;
+  try {
+    const r = await get(`/api/facilities/${id}`);
+    panel.innerHTML = `
+      <div class="detail-toolbar">
+        <button class="btn btn-secondary btn-sm" onclick="showFacilityListView()">← Back to Facilities</button>
+        <div class="breadcrumb">Facilities / ${r.name}</div>
+      </div>
+      <div class="page-header">
+        <h1>${r.name}</h1>
+        <p>${fmt(r.type_name)} · ${statusBadge(r.status_name)}</p>
+      </div>
+      <div class="card">
+        <div class="card-title">Facility Info</div>
+        <div class="detail-grid">
+          <div class="detail-field"><label>Type</label><span>${fmt(r.type_name)}</span></div>
+          <div class="detail-field"><label>Purpose</label><span>${fmt(r.purpose_name)}</span></div>
+          <div class="detail-field"><label>Status</label><span>${statusBadge(r.status_name)}</span></div>
+          <div class="detail-field"><label>Address</label><span>${fmt(r.address)}</span></div>
+          <div class="detail-field"><label>Requires Training</label><span>${r.requires_training ? "Yes" : "No"}</span></div>
+          <div class="detail-field"><label>Requires Certification</label><span>${r.requires_certification ? "Yes" : "No"}</span></div>
+        </div>
+        ${r.capability_description ? `<p class="text-muted mt-8">${r.capability_description}</p>` : ""}
+      </div>
+      <div class="card">
+        <div class="card-title">Equipment in this Facility (${r.equipment.length})</div>
+        ${r.equipment.length ? `
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Type</th><th>Status</th></tr></thead>
+            <tbody>${r.equipment.map(e => `<tr class="no-hover">
+              <td>${e.name}</td><td>${fmt(e.type_name)}</td><td>${statusBadge(e.status_name)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No equipment currently assigned.</p>`}
+      </div>
+      <div class="stat-cards-row facility-summary-row">
+        <div class="stat-card stat-card-purple">
+          <div class="stat-card-num">${r.summary?.equipment_count ?? 0}</div>
+          <div class="stat-card-label">Equipment</div>
+          <div class="stat-card-sub">Currently assigned</div>
+        </div>
+        <div class="stat-card stat-card-green">
+          <div class="stat-card-num">${r.summary?.usage_count ?? 0}</div>
+          <div class="stat-card-label">Usage Records</div>
+          <div class="stat-card-sub">Recorded in this facility</div>
+        </div>
+        <div class="stat-card stat-card-orange">
+          <div class="stat-card-num">${r.summary?.total_usage_hours ?? 0}</div>
+          <div class="stat-card-label">Usage Hours</div>
+          <div class="stat-card-sub">Total facility runtime</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Facility Usage Records (last 10)</div>
+        ${r.usage.length ? `
+          <table class="data-table">
+            <thead><tr><th>Start</th><th>End</th><th>Equipment</th><th>Qty</th><th>Status</th><th>User</th></tr></thead>
+            <tbody>${r.usage.map(u => `<tr class="no-hover">
+              <td>${fmtDate(u.start_time)}</td><td>${fmtDate(u.end_time)}</td>
+              <td>${fmt(u.equipment_name)}</td><td>${fmt(u.quantity)}</td>
+              <td>${statusBadge(u.usage_status)}</td><td>${fmt(u.user_name)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No usage records.</p>`}
+      </div>
+      <div class="card">
+        <div class="card-title">Facility Maintenance Records (last 10)</div>
+        ${r.maintenance.length ? `
+          <table class="data-table">
+            <thead><tr><th>Type</th><th>Start</th><th>End</th><th>Scheduled</th><th>Technician</th></tr></thead>
+            <tbody>${r.maintenance.map(m => `<tr class="no-hover">
+              <td>${statusBadge(m.activity_type)}</td>
+              <td>${fmtDate(m.start_time)}</td><td>${fmtDate(m.end_time)}</td>
+              <td>${m.is_scheduled ? "Yes" : "No"}</td>
+              <td>${fmt(m.technician)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No maintenance records.</p>`}
+      </div>`;
+  } catch (e) { showError(panel, e.message); }
+}
+
+function showFacilityDetailView() {
+  document.getElementById("facility-list-page").style.display = "none";
+  document.getElementById("facility-detail-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showFacilityListView() {
+  document.getElementById("facility-detail-page").style.display = "none";
+  document.getElementById("facility-list-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+</script>

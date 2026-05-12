@@ -1,0 +1,223 @@
+<script>
+async function loadBilling() {
+  const chargesWrap = document.getElementById("charges-list-wrap");
+  const budgetWrap  = document.getElementById("budget-wrap");
+  showLoading(chargesWrap);
+  showLoading(budgetWrap);
+  try {
+    const [charges, budget, filterOptions] = await Promise.all([
+      get("/api/billing/charges"),
+      get("/api/billing/budget"),
+      get("/api/billing/filter-options"),
+    ]);
+    renderBillingFilters(filterOptions);
+    renderCharges(charges, chargesWrap);
+    renderBudget(budget, budgetWrap);
+  } catch (e) {
+    showError(chargesWrap, e.message);
+    showError(budgetWrap, e.message);
+  }
+}
+
+function renderBillingFilters(options) {
+  const statusSel = document.getElementById("bill-status-filter");
+  const categorySel = document.getElementById("bill-category-filter");
+  if (statusSel) {
+    statusSel.innerHTML = `<option value="">All Statuses</option>` +
+      options.statuses.map(s => `<option value="${s.status}">${s.status}</option>`).join("");
+  }
+  if (categorySel) {
+    categorySel.innerHTML = `<option value="">All Categories</option>` +
+      options.categories.map(c => `<option value="${c.charge_category}">${c.charge_category}</option>`).join("");
+  }
+}
+
+async function filterCharges() {
+  const status = document.getElementById("bill-status-filter")?.value || "";
+  const category = document.getElementById("bill-category-filter")?.value || "";
+  const wrap = document.getElementById("charges-list-wrap");
+  showLoading(wrap);
+  try {
+    const params = new URLSearchParams();
+    if (status) params.set("status", status);
+    if (category) params.set("category", category);
+    const items = await get(`/api/billing/charges?${params}`);
+    renderCharges(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+function renderCharges(items, wrap) {
+  if (!items.length) { wrap.innerHTML = `<div class="empty-state"><p>No charges.</p></div>`; return; }
+  wrap.innerHTML = `
+    <div class="record-grid billing-grid">
+      ${items.map(r => `
+        <button class="record-card billing-card" onclick="loadChargeDetail(${r.charge_id})">
+          <div class="record-card-top">
+            <span class="record-id">#${r.charge_id}</span>
+            ${statusBadge(r.status)}
+          </div>
+          <strong class="money-title">${fmtMoney(r.amount)}</strong>
+          <div class="record-meta">
+            <span class="tag">${fmt(r.charge_category)}</span>
+            <span>${fmtDate(r.usage_time)}</span>
+          </div>
+          <div class="record-footer">
+            <span>${fmt(r.person_name)}</span>
+            <span>${fmt(r.equipment_name)}</span>
+          </div>
+          <span class="record-action">Open charge</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+async function loadChargeDetail(id) {
+  showChargeDetailView();
+  const panel = document.getElementById("charge-detail-page");
+  panel.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;
+  try {
+    const r = await get(`/api/billing/charges/${id}`);
+    const adjTotal = r.adjustments.reduce((s, a) =>
+      a.adjustment_type === "credit" ? s - a.amount : s + a.amount, 0);
+    panel.innerHTML = `
+      <div class="detail-toolbar">
+        <button class="btn btn-secondary btn-sm" onclick="showChargeListView()">← Back to Charges</button>
+        <div class="breadcrumb">Billing / Charge #${r.charge_id}</div>
+      </div>
+      <div class="page-header flex-between">
+        <div>
+          <h1>Charge #${r.charge_id}</h1>
+          <p>${r.charge_category} · ${statusBadge(r.status)}</p>
+        </div>
+        ${r.status === "unpaid" ? `
+          <button class="btn btn-primary" onclick="makePayment(${r.charge_id})">Make Payment</button>
+        ` : ""}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Charge Details</div>
+        <div class="detail-grid">
+          <div class="detail-field"><label>Amount</label><span style="font-size:18px;font-weight:700">${fmtMoney(r.amount)}</span></div>
+          <div class="detail-field"><label>Status</label><span>${statusBadge(r.status)}</span></div>
+          <div class="detail-field"><label>Person</label><span>${fmt(r.person_name)}</span></div>
+          <div class="detail-field"><label>Category</label><span>${fmt(r.charge_category)}</span></div>
+          <div class="detail-field"><label>Equipment</label><span>${fmt(r.equipment_name)}</span></div>
+          <div class="detail-field"><label>Facility</label><span>${fmt(r.facility_name)}</span></div>
+          <div class="detail-field"><label>Usage Start</label><span>${fmtDate(r.start_time)}</span></div>
+          <div class="detail-field"><label>Usage End</label><span>${fmtDate(r.end_time)}</span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Adjustments</div>
+        ${r.adjustments.length ? `
+          <table class="data-table">
+            <thead><tr><th>Type</th><th>Amount</th><th>Reason</th></tr></thead>
+            <tbody>${r.adjustments.map(a => `<tr class="no-hover">
+              <td>${statusBadge(a.adjustment_type)}</td>
+              <td>${a.adjustment_type === "credit" ? `-${fmtMoney(a.amount)}` : `+${fmtMoney(a.amount)}`}</td>
+              <td class="text-muted">${fmt(a.reason_code)}</td>
+            </tr>`).join("")}</tbody>
+          </table>
+          <p class="text-muted mt-8">Net adjustment: <strong>${adjTotal >= 0 ? "+" : ""}${fmtMoney(adjTotal)}</strong></p>
+        ` : `<p class="text-muted">No adjustments.</p>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Funding Allocation</div>
+        ${r.allocations.length ? `
+          <table class="data-table">
+            <thead><tr><th>Payer</th><th>Source</th><th>Allocated</th></tr></thead>
+            <tbody>${r.allocations.map(a => `<tr class="no-hover">
+              <td>${fmt(a.payer_name)}</td>
+              <td>${fmt(a.source_name ?? a.source_type)}</td>
+              <td><strong>${fmtMoney(a.allocation_amount)}</strong></td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No funding allocation.</p>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Payment Records</div>
+        ${r.payments.length ? `
+          <table class="data-table">
+            <thead><tr><th>ID</th><th>Date</th><th>Method</th><th>Amount</th><th>Payer</th></tr></thead>
+            <tbody>${r.payments.map(p => `<tr class="no-hover">
+              <td class="text-muted">#${p.payment_id}</td>
+              <td>${fmtDate(p.paid_at)}</td>
+              <td>${fmt(p.method)}</td>
+              <td><strong>${fmtMoney(p.paid_amount)}</strong></td>
+              <td>${fmt(p.payer_name)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No payments recorded.</p>`}
+      </div>`;
+  } catch (e) { showError(panel, e.message); }
+}
+
+function showChargeDetailView() {
+  document.getElementById("billing-charges-list-page").style.display = "none";
+  document.getElementById("charge-detail-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showChargeListView() {
+  document.getElementById("charge-detail-page").style.display = "none";
+  document.getElementById("billing-charges-list-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function makePayment(chargeId) {
+  if (!confirm(`Make payment for Charge #${chargeId}?`)) return;
+  try {
+    await post(`/api/billing/charges/${chargeId}/pay`, {});
+    await loadChargeDetail(chargeId);
+    await filterCharges();
+    const budgetWrap = document.getElementById("budget-wrap");
+    if (budgetWrap) renderBudget(await get("/api/billing/budget"), budgetWrap);
+    showToast("Payment recorded. Charge marked as paid.");
+  } catch (e) {
+    alert("Error: " + e.message);
+  }
+}
+
+function renderBudget(items, wrap) {
+  if (!items.length) { wrap.innerHTML = `<div class="empty-state"><p>No funding sources.</p></div>`; return; }
+  wrap.innerHTML = items.map(fs => {
+    const budget = parseFloat(fs.total_budget) || 0;
+    const used   = parseFloat(fs.used_budget) || 0;
+    const pct    = budget > 0 ? Math.min((used / budget) * 100, 100) : 0;
+    const fillCls = pct > 90 ? "danger" : pct > 70 ? "warn" : "";
+    return `
+      <div class="card" style="margin-bottom:14px">
+        <div class="flex-between">
+          <div>
+            <strong>${fs.payer_name}</strong>
+            <span class="text-muted" style="margin-left:10px">${fmt(fs.source_name ?? fs.source_type)}</span>
+          </div>
+          <span class="badge ${fs.status === 'active' ? 'badge-green' : 'badge-gray'}">${fmt(fs.status)}</span>
+        </div>
+        <div class="budget-bar-wrap mt-8">
+          <div class="budget-bar-bg">
+            <div class="budget-bar-fill ${fillCls}" style="width:${pct.toFixed(1)}%"></div>
+          </div>
+          <div class="budget-labels">
+            <span>Used: ${fmtMoney(used)}</span>
+            <span>${pct.toFixed(1)}%</span>
+            <span>Budget: ${fmtMoney(budget)}</span>
+          </div>
+        </div>
+        <div class="text-muted mt-8" style="font-size:11.5px">
+          ${fs.start_date ? `${fmtDate(fs.start_date)} – ${fmtDate(fs.end_date)}` : ""}
+        </div>
+      </div>`;
+  }).join("");
+}
+
+function showBillingSubPage(id) {
+  ["billing-charges-page", "billing-budget-page"].forEach(p => {
+    const el = document.getElementById(p);
+    if (el) el.style.display = p === id ? "" : "none";
+  });
+  if (id === "billing-charges-page" && document.getElementById("billing-charges-list-page")) {
+    showChargeListView();
+  }
+}
+</script>

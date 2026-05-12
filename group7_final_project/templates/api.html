@@ -1,0 +1,65 @@
+<script>
+async function apiFetch(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...opts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || res.statusText);
+  }
+  return res.json();
+}
+
+function get(url)       { return apiFetch(url); }
+function post(url, body) { return apiFetch(url, { method: "POST", body: JSON.stringify(body) }); }
+function put(url, body)  { return apiFetch(url, { method: "PUT", body: JSON.stringify(body) }); }
+function del(url)        { return apiFetch(url, { method: "DELETE" }); }
+
+function statusBadge(s) {
+  const statusClass = s == null ? "" : ` badge-status-${String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+  const map = {
+    Available: "badge-green",
+    available: "badge-green",
+    Using: "badge-blue",
+    Under_maintenance: "badge-orange",
+    approved: "badge-green",
+    declined: "badge-red",
+    rejected: "badge-red",
+    pending: "badge-orange",
+    active: "badge-blue",
+    completed: "badge-green",
+    paused: "badge-orange",
+    cancelled: "badge-red",
+    in_progress: "badge-blue",
+    not_started: "badge-gray",
+    paid: "badge-green",
+    unpaid: "badge-red",
+    disputed: "badge-orange",
+    equipment: "badge-blue",
+    facility: "badge-purple",
+    home_institution: "badge-blue",
+    consortium: "badge-purple",
+  };
+  const cls = map[s] || "badge-gray";
+  return `<span class="badge ${cls}${statusClass}">${s ?? "—"}</span>`;
+}
+
+function esc(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function fmt(v) { return v == null ? "—" : esc(v); }
+function fmtDate(d) { return d ? d.split("T")[0] : "—"; }
+function fmtMoney(n) {
+  if (n == null) return "—";
+  return "$" + parseFloat(n).toLocaleString("en-US", { minimumFractionDigits: 2 });
+}
+
+function showLoading(el) {
+  el.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;
+}
+
+function showError(el, msg) {
+  el.innerHTML = `<div class="empty-state"><p style="color:#6f5c3b">${msg}</p></div>`;
+}
+</script>

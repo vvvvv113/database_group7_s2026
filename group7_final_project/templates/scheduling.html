@@ -1,0 +1,232 @@
+<script>
+let _allocView = "calendar";     // "list" | "calendar"
+let _allAllocations = [];
+let _calYear  = new Date().getFullYear();
+let _calMonth = new Date().getMonth();
+
+async function loadScheduling() {
+  const allocWrap = document.getElementById("alloc-list-wrap");
+  showLoading(allocWrap);
+  try {
+    const allocs = await get("/api/scheduling/allocations");
+    _allAllocations = allocs;
+    // Default to calendar month that has most allocations
+    if (allocs.length) {
+      const latest = allocs[allocs.length - 1].actual_start_date;
+      if (latest) {
+        const d = new Date(latest);
+        _calYear  = d.getFullYear();
+        _calMonth = d.getMonth();
+      }
+    }
+    renderAllocView(allocWrap);
+  } catch (e) {
+    showError(allocWrap, e.message);
+  }
+}
+
+function switchAllocView(mode) {
+  _allocView = mode;
+  document.getElementById("btn-list-view").classList.toggle("active", mode === "list");
+  document.getElementById("btn-cal-view").classList.toggle("active",  mode === "calendar");
+  const wrap = document.getElementById("alloc-list-wrap");
+  renderAllocView(wrap);
+}
+
+function renderAllocView(wrap) {
+  if (_allocView === "calendar") {
+    renderCalendar(_allAllocations, _calYear, _calMonth, wrap);
+  } else {
+    renderAllocations(_allAllocations, wrap);
+  }
+}
+
+// ── List view ───────────────────────────────────────────────────────────────
+
+function renderAllocations(items, wrap) {
+  if (!items.length) { wrap.innerHTML = `<div class="empty-state"><p>No allocations.</p></div>`; return; }
+  const colors = ["#3e5148", "#64786d", "#949f97", "#a69242", "#7f8f82", "#5b6b60"];
+  const expColor = {};
+  let ci = 0;
+  wrap.innerHTML = `<div class="allocation-list">` +
+    items.map(r => {
+      if (!expColor[r.experiment_id]) expColor[r.experiment_id] = colors[ci++ % colors.length];
+      return `
+        <div class="alloc-row" style="border-left-color:${expColor[r.experiment_id]}">
+          <div class="alloc-dates">${fmtDate(r.actual_start_date)} → ${fmtDate(r.actual_end_date)}</div>
+          <div class="alloc-title">${r.experiment_title}</div>
+          <div class="alloc-resource">
+            ${r.equipment_name ? `Equipment: ${r.equipment_name}` : ""}
+            ${r.facility_name  ? `Facility: ${r.facility_name}`  : ""}
+          </div>
+          <span class="text-muted" style="font-size:12px">${fmt(r.applicant)}</span>
+        </div>`;
+    }).join("") + `</div>`;
+}
+
+// ── Calendar view ───────────────────────────────────────────────────────────
+
+function renderCalendar(allocations, year, month, wrap) {
+  const MONTHS = ["January","February","March","April","May","June",
+                  "July","August","September","October","November","December"];
+  const DAYS   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const firstDow   = new Date(year, month, 1).getDay();
+  const daysInMon  = new Date(year, month + 1, 0).getDate();
+  const today = new Date();
+
+  // Map day -> list of allocations active that day
+  const dayMap = {};
+  allocations.forEach(a => {
+    const s = new Date(a.actual_start_date + "T00:00:00");
+    const e = new Date(a.actual_end_date   + "T23:59:59");
+    for (let d = 1; d <= daysInMon; d++) {
+      const day = new Date(year, month, d);
+      if (day >= s && day <= e) {
+        if (!dayMap[d]) dayMap[d] = [];
+        dayMap[d].push(a);
+      }
+    }
+  });
+
+  const colors = ["#c8d5c5", "#ebe2aa", "#dce7d9", "#eee9d0", "#b9c8bb", "#d6cf9f", "#e4eadf", "#cfdcc9"];
+  const expColor = {};
+  let ci = 0;
+  allocations.forEach(a => {
+    if (!expColor[a.experiment_id]) expColor[a.experiment_id] = colors[ci++ % colors.length];
+  });
+  const allocLane = assignCalendarLanes(allocations, year, month);
+
+  let cells = "";
+  for (let i = 0; i < firstDow; i++) cells += `<div class="cal-cell empty"></div>`;
+  for (let d = 1; d <= daysInMon; d++) {
+    const isToday = today.getFullYear() === year && today.getMonth() === month && today.getDate() === d;
+    const allocs  = dayMap[d] || [];
+    const bars = [0, 1, 2].map(lane => {
+      const alloc = allocs.find(a => allocLane[a.allocation_id] === lane);
+      return alloc
+        ? calendarBar(alloc, d, year, month, daysInMon, expColor[alloc.experiment_id])
+        : `<div class="cal-bar-spacer"></div>`;
+    }).join("");
+    const hiddenCount = allocs.filter(a => allocLane[a.allocation_id] > 2).length;
+    cells += `
+      <div class="cal-cell ${isToday ? "today" : ""} ${allocs.length ? "has-alloc" : ""}"
+           onclick="showDayDetail(${year},${month},${d})">
+        <div class="cal-day-num">${d}</div>
+        ${allocs.length ? `<div class="cal-bars">${bars}${hiddenCount ? `<div class="cal-more">+${hiddenCount} more</div>` : ""}</div>` : ""}
+      </div>`;
+  }
+
+  wrap.innerHTML = `
+    <div class="cal-nav">
+      <button class="btn btn-secondary btn-sm" onclick="changeCalMonth(-1)">◀</button>
+      <strong>${MONTHS[month]} ${year}</strong>
+      <button class="btn btn-secondary btn-sm" onclick="changeCalMonth(1)">▶</button>
+    </div>
+    <div class="calendar-grid">
+      ${DAYS.map(d => `<div class="cal-header">${d}</div>`).join("")}
+      ${cells}
+    </div>
+    <div id="cal-day-detail" class="cal-day-detail" style="display:none"></div>`;
+}
+
+function assignCalendarLanes(allocations, year, month) {
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month + 1, 0);
+  const laneEnds = [];
+  const lanes = {};
+
+  allocations
+    .filter(a => {
+      const start = new Date(a.actual_start_date + "T00:00:00");
+      const end = new Date(a.actual_end_date + "T00:00:00");
+      return start <= monthEnd && end >= monthStart;
+    })
+    .sort((a, b) => {
+      const startDiff = new Date(a.actual_start_date) - new Date(b.actual_start_date);
+      if (startDiff) return startDiff;
+      return new Date(a.actual_end_date) - new Date(b.actual_end_date);
+    })
+    .forEach(a => {
+      const start = new Date(a.actual_start_date + "T00:00:00");
+      const end = new Date(a.actual_end_date + "T00:00:00");
+      let lane = laneEnds.findIndex(laneEnd => laneEnd < start);
+      if (lane === -1) lane = laneEnds.length;
+      laneEnds[lane] = end;
+      lanes[a.allocation_id] = lane;
+    });
+
+  return lanes;
+}
+
+function calendarBar(a, day, year, month, daysInMon, color) {
+  const cellDate = new Date(year, month, day);
+  const start = new Date(a.actual_start_date + "T00:00:00");
+  const end = new Date(a.actual_end_date + "T00:00:00");
+  const startsHere = sameCalendarDate(cellDate, start) || day === 1 || cellDate.getDay() === 0;
+  const endsHere = sameCalendarDate(cellDate, end) || day === daysInMon || cellDate.getDay() === 6;
+  const label = startsHere ? fmt(a.experiment_title) : "";
+  const classes = [
+    "cal-bar",
+    startsHere ? "bar-start" : "bar-mid",
+    endsHere ? "bar-end" : "bar-mid",
+  ].join(" ");
+
+  return `
+    <div class="${classes}"
+         style="background:${color}"
+         title="${fmt(a.experiment_title)} | ${fmtDate(a.actual_start_date)} -> ${fmtDate(a.actual_end_date)}">
+      ${label}
+    </div>`;
+}
+
+function sameCalendarDate(a, b) {
+  return a.getFullYear() === b.getFullYear()
+    && a.getMonth() === b.getMonth()
+    && a.getDate() === b.getDate();
+}
+
+function changeCalMonth(delta) {
+  _calMonth += delta;
+  if (_calMonth > 11) { _calMonth = 0;  _calYear++; }
+  if (_calMonth < 0)  { _calMonth = 11; _calYear--; }
+  const wrap = document.getElementById("alloc-list-wrap");
+  renderCalendar(_allAllocations, _calYear, _calMonth, wrap);
+}
+
+function showDayDetail(year, month, day) {
+  const detail = document.getElementById("cal-day-detail");
+  if (!detail) return;
+  // Deselect previous
+  document.querySelectorAll(".cal-cell.selected").forEach(c => c.classList.remove("selected"));
+  // Find clicked cell (cells are generated in order, so use offset)
+  const firstDow = new Date(year, month, 1).getDay();
+  const cellIdx  = firstDow + day - 1;
+  const cells = document.querySelectorAll(".cal-cell:not(.empty)");
+  if (cells[day - 1]) cells[day - 1].classList.add("selected");
+
+  const allocs = (_allAllocations || []).filter(a => {
+    const s = new Date(a.actual_start_date + "T00:00:00");
+    const e = new Date(a.actual_end_date   + "T23:59:59");
+    const d = new Date(year, month, day);
+    return d >= s && d <= e;
+  });
+
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  detail.style.display = "block";
+  if (!allocs.length) {
+    detail.innerHTML = `<p class="text-muted">${MONTHS[month]} ${day}, ${year} — No allocations.</p>`;
+    return;
+  }
+  detail.innerHTML = `
+    <strong>${MONTHS[month]} ${day}, ${year} — ${allocs.length} allocation(s)</strong>
+    <table class="data-table mt-8">
+      <thead><tr><th>Experiment</th><th>Resource</th><th>Applicant</th><th>Period</th></tr></thead>
+      <tbody>${allocs.map(a => `<tr class="no-hover">
+        <td>${fmt(a.experiment_title)}</td>
+        <td>${a.equipment_name ? `Equipment: ${a.equipment_name}` : `Facility: ${a.facility_name}`}</td>
+        <td>${fmt(a.applicant)}</td>
+        <td>${fmtDate(a.actual_start_date)} → ${fmtDate(a.actual_end_date)}</td>
+      </tr>`).join("")}</tbody>
+    </table>`;
+}
+</script>

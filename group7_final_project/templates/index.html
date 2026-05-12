@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lab Management System</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ── Top Nav ─────────────────────────────────────────────────────────────── -->
+<nav class="topnav">
+  <div class="topnav-links topnav-links-left">
+    <button onclick="navigateTo('resources', true)" id="nav-resources">Resources</button>
+    <button onclick="navigateTo('experiments', true)" id="nav-experiments">Experiments</button>
+    <button onclick="navigateTo('applications', true)" id="nav-applications">Applications</button>
+  </div>
+  <button class="topnav-brand" onclick="navigateTo('home', true)" aria-label="Go to home">Lab <span>Management</span></button>
+  <div class="topnav-links topnav-links-right">
+    <button onclick="navigateTo('scheduling', true)" id="nav-scheduling">Scheduling</button>
+    <button onclick="navigateTo('usage-records', true)" id="nav-usage-records">Usage Records</button>
+    <button onclick="navigateTo('billing', true)" id="nav-billing">Billing</button>
+  </div>
+</nav>
+
+<!-- ── Page Shell ──────────────────────────────────────────────────────────── -->
+<div class="page-shell">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <!-- Main -->
+  <main class="main-content" id="main-content">
+    <div class="loading" id="initial-loading">
+      <span class="spinner"></span>Loading…
+    </div>
+  </main>
+
+</div>
+
+<!-- ── Reallocate Modal ────────────────────────────────────────────────────── -->
+<div class="modal-overlay" id="reallocate-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Reallocate Equipment</h2>
+      <button class="modal-close" onclick="closeReallocateModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="margin-bottom:16px">Move <strong id="reallocate-eq-name"></strong> to a new facility:</p>
+      <div class="form-group">
+        <label>New Facility <span class="required-mark">*</span></label>
+        <select id="reallocate-facility-sel"><option value="">Loading…</option></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeReallocateModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitReallocate()">Confirm Reallocation</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Make Application Modal ─────────────────────────────────────────────── -->
+<div class="modal-overlay" id="make-app-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Make Application</h2>
+      <button class="modal-close" onclick="closeMakeApplicationModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="app-form-error" style="display:none;background:#e2d8c5;color:#6f5c3b;padding:10px 14px;border-radius:0;margin-bottom:14px;font-size:13px;"></div>
+      <form id="make-app-form" onsubmit="return false">
+
+        <div class="form-section-title">Application Type</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Application Type <span class="required-mark">*</span></label>
+            <select id="app-type" onchange="toggleAppTypeFields()">
+              <option value="equipment">Equipment</option>
+              <option value="facility">Facility</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-section-title">People</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Applicant <span class="required-mark">*</span></label>
+            <select id="app-person"></select>
+          </div>
+          <div class="form-group">
+            <label>Supervising Staff <span class="required-mark">*</span></label>
+            <select id="app-staff"></select>
+          </div>
+        </div>
+
+        <div class="form-section-title">Experiment & Resource</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Experiment <span class="required-mark">*</span></label>
+            <select id="app-experiment"></select>
+          </div>
+          <div class="form-group" id="app-equipment-group">
+            <label>Equipment <span class="required-mark">*</span></label>
+            <select id="app-equipment"></select>
+          </div>
+          <div class="form-group" id="app-facility-group" style="display:none">
+            <label>Facility <span class="required-mark">*</span></label>
+            <select id="app-facility"></select>
+          </div>
+        </div>
+
+        <div class="form-section-title">Schedule</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Start Date <span class="required-mark">*</span></label>
+            <input type="date" id="app-start" required>
+          </div>
+          <div class="form-group">
+            <label>End Date <span class="required-mark">*</span></label>
+            <input type="date" id="app-end" required>
+          </div>
+        </div>
+
+        <div class="form-section-title">Details</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Estimated Usage <span class="required-mark">*</span></label>
+            <input type="text" id="app-usage" placeholder="e.g. 40 hours" required>
+          </div>
+          <div class="form-group">
+            <label>Expected Outcome</label>
+            <input type="text" id="app-outcome" placeholder="Brief description">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Safety Considerations <span class="required-mark">*</span></label>
+          <textarea id="app-safety" placeholder="Any safety notes…" required></textarea>
+        </div>
+        <div class="form-group">
+          <label>Special Notes</label>
+          <textarea id="app-note" placeholder="Additional information…"></textarea>
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeMakeApplicationModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="submitMakeApplication()">Submit Application</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toast ───────────────────────────────────────────────────────────────── -->
+<div id="toast" style="
+  display:none;
+  position:fixed;
+  bottom:28px;
+  right:28px;
+  background:#3e5148;
+  color:#f7f6ed;
+  padding:12px 20px;
+  border-radius:8px;
+  font-size:13.5px;
+  box-shadow:none;
+  z-index:999;
+  max-width:360px;
+"></div>
+
+<!-- ── Scripts ────────────────────────────────────────────────────────────── -->
+{% include 'api.html' %}
+{% include 'resources.html' %}
+{% include 'experiments.html' %}
+{% include 'applications.html' %}
+{% include 'scheduling.html' %}
+{% include 'usage_records.html' %}
+{% include 'billing.html' %}
+<script>
+
+// ── Scroll Helper ────────────────────────────────────────────────────────────
+
+function scrollToEl(id) {
+  const el = document.getElementById(id);
+  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+// ── Navigation ──────────────────────────────────────────────────────────────
+
+const SECTIONS = {
+  home: {
+    sidebar: [],
+    title: "Home",
+    render: renderHomePage,
+  },
+  resources: {
+    sidebar: [
+      { id: "eq",  label: "Equipment",  icon: "⚙",  fn: "showSubPage('equipment-page')" },
+      { id: "fac", label: "Facilities", icon: "🏢", fn: "showSubPage('facility-page')" },
+    ],
+    title: "Resources",
+    render: renderResourcesPage,
+  },
+  experiments: {
+    sidebar: [
+      { id: "exp-list", label: "Experiments", icon: "🧪", fn: "" },
+    ],
+    title: "Experiments",
+    render: renderExperimentsPage,
+  },
+  applications: {
+    sidebar: [
+      { id: "app-list", label: "All Applications", icon: "📋", fn: "" },
+    ],
+    title: "Applications",
+    render: renderApplicationsPage,
+  },
+  scheduling: {
+    sidebar: [
+      { id: "sch-alloc", label: "Allocations", icon: "📅", fn: "" },
+    ],
+    title: "Scheduling",
+    render: renderSchedulingPage,
+  },
+  "usage-records": {
+    sidebar: [
+      { id: "usage-records-list", label: "All Records", icon: "📊", fn: "" },
+    ],
+    title: "Usage Records",
+    render: renderUsageRecordsPage,
+  },
+	  billing: {
+	    sidebar: [
+	      { id: "bill-charges", label: "Charges", icon: "💳", fn: "showBillingSubPage('billing-charges-page')" },
+	      { id: "bill-budget",  label: "Budget",  icon: "📈", fn: "showBillingSubPage('billing-budget-page')" },
+	    ],
+    title: "Billing",
+    render: renderBillingPage,
+  },
+};
+
+let currentSection = null;
+
+function navigateTo(section, skipIfSame = false) {
+  if (skipIfSame && currentSection === section) return;
+  currentSection = section;
+  // Update nav buttons
+  document.querySelectorAll(".topnav-links button").forEach(b => b.classList.remove("active"));
+  document.getElementById("nav-" + section)?.classList.add("active");
+  // Render sidebar
+  const cfg = SECTIONS[section];
+  const sidebar = document.getElementById("sidebar");
+  const showSidebar = section !== "home" && cfg.sidebar.length > 1;
+  document.querySelector(".page-shell").classList.toggle("home-shell", section === "home");
+  document.querySelector(".page-shell").classList.toggle("no-sidebar-shell", !showSidebar);
+  sidebar.style.display = showSidebar ? "" : "none";
+  sidebar.innerHTML = showSidebar ? `
+    <div class="sidebar-section">${cfg.title}</div>
+    ${cfg.sidebar.map(s => `
+      <div class="sidebar-item" id="si-${s.id}" onclick="setSidebarActive('${s.id}'); ${s.fn}">
+        <span class="sidebar-label">${s.label}</span>
+      </div>`).join("")}` : "";
+  // Render main
+  cfg.render();
+}
+
+function setSidebarActive(id) {
+  document.querySelectorAll(".sidebar-item").forEach(e => e.classList.remove("active"));
+  document.getElementById("si-" + id)?.classList.add("active");
+}
+
+// ── Page Renderers ──────────────────────────────────────────────────────────
+
+function renderHomePage() {
+  document.getElementById("main-content").innerHTML = `
+    <section class="home-hero">
+      <div class="hero-text">
+        <p class="eyebrow">Research operations dashboard</p>
+        <h1>Coordinate lab resources system.</h1>
+        <p class="hero-copy">Jump into equipment, experiments, scheduling, usage, and billing from one cleaner workspace.</p>
+        <div class="hero-buttons">
+          <button class="btn btn-primary hero-action" onclick="openMakeApplication()">New Application</button>
+          <button class="btn btn-secondary hero-action" onclick="navigateTo('resources')">View Resources</button>
+        </div>
+      </div>
+      <div class="hero-orb" aria-hidden="true"></div>
+      <div class="hero-pixel-word" aria-hidden="true">LAB OPS.</div>
+    </section>
+
+    <section class="home-actions" aria-label="Main sections">
+      <button class="home-action-card" onclick="navigateTo('resources')">
+        <span class="home-action-shape"></span>
+        <strong>Resources</strong>
+      </button>
+      <button class="home-action-card" onclick="navigateTo('experiments')">
+        <span class="home-action-shape"></span>
+        <strong>Experiments</strong>
+      </button>
+      <button class="home-action-card" onclick="navigateTo('applications')">
+        <span class="home-action-shape"></span>
+        <strong>Applications</strong>
+      </button>
+      <button class="home-action-card" onclick="navigateTo('scheduling')">
+        <span class="home-action-shape"></span>
+        <strong>Scheduling</strong>
+      </button>
+      <button class="home-action-card" onclick="navigateTo('usage-records')">
+        <span class="home-action-shape"></span>
+        <strong>Usage Records</strong>
+      </button>
+      <button class="home-action-card" onclick="navigateTo('billing')">
+        <span class="home-action-shape"></span>
+        <strong>Billing</strong>
+      </button>
+    </section>`;
+}
+
+function renderResourcesPage() {
+  document.getElementById("main-content").innerHTML = `
+    <!-- Equipment Sub-page -->
+    <div id="equipment-page">
+      <div id="equipment-list-page" class="list-page">
+        <div class="page-header">
+          <h1>Equipment</h1><p>View and manage lab equipment</p>
+        </div>
+        <div class="filter-bar">
+          <input class="search-input" id="eq-name-search" type="search" placeholder="Search equipment name" oninput="filterEquipment()">
+          <select id="eq-status-filter" onchange="filterEquipment()">
+            <option value="">All Statuses</option>
+            <option>Available</option>
+            <option>Using</option>
+            <option>Under_maintenance</option>
+          </select>
+          <select id="eq-type-filter" onchange="filterEquipment()">
+            <option value="">All Types</option>
+          </select>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div id="equipment-list-wrap"></div>
+        </div>
+        <div class="card mt-16">
+          <div class="card-title">Equipment Utilization (Total Hours Used)</div>
+          <div class="chart-wrap"><canvas id="eq-util-chart" height="180"></canvas></div>
+        </div>
+      </div>
+      <div id="equipment-detail-page" class="detail-page" style="display:none"></div>
+    </div>
+
+    <!-- Facility Sub-page -->
+    <div id="facility-page" style="display:none">
+      <div id="facility-list-page" class="list-page">
+        <div class="page-header">
+          <h1>Facilities</h1><p>All available lab facilities</p>
+        </div>
+        <div class="filter-bar">
+          <input class="search-input" id="facility-name-search" type="search" placeholder="Search facility name" oninput="filterFacilities()">
+          <select id="facility-status-filter" onchange="filterFacilities()">
+            <option value="">All Statuses</option>
+          </select>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div id="facility-list-wrap"></div>
+        </div>
+      </div>
+      <div id="facility-detail-page" class="detail-page" style="display:none"></div>
+    </div>`;
+  setSidebarActive("eq");
+  showSubPage("equipment-page");
+}
+
+function showSubPage(id) {
+  ["equipment-page", "facility-page"].forEach(p => {
+    const el = document.getElementById(p);
+    if (el) el.style.display = p === id ? "" : "none";
+  });
+  if (id === "facility-page") {
+    showFacilityListView();
+    loadFacilityList();
+  }
+  else if (id === "equipment-page") {
+    showEquipmentListView();
+    loadEquipmentList();
+    loadEquipmentStats();
+  }
+}
+
+function renderExperimentsPage() {
+  document.getElementById("main-content").innerHTML = `
+    <div id="experiment-list-page" class="list-page">
+      <div class="page-header">
+        <h1>Experiments</h1><p>All research experiments</p>
+      </div>
+      <div class="filter-bar">
+        <input class="search-input" id="exp-name-search" type="search" placeholder="Search experiment title" oninput="filterExperiments()">
+        <select id="exp-status-filter" onchange="filterExperiments()">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="completed">Completed</option>
+          <option value="paused">Paused</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="experiment-list-wrap"></div>
+      </div>
+    </div>
+    <div id="experiment-detail-page" class="detail-page" style="display:none"></div>`;
+  setSidebarActive("exp-list");
+  loadExperimentList();
+}
+
+function renderApplicationsPage() {
+  document.getElementById("main-content").innerHTML = `
+    <div id="application-list-page" class="list-page">
+      <div class="page-header flex-between">
+        <div><h1>Applications</h1><p>Resource access applications and approvals</p></div>
+        <button class="btn btn-primary" onclick="openMakeApplication()">+ New Application</button>
+      </div>
+      <div class="charts-row">
+        <div class="card">
+          <div class="card-title">Application Status Distribution</div>
+          <div class="chart-wrap" style="max-height:220px"><canvas id="app-status-chart"></canvas></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Application Trend by Month</div>
+          <div class="chart-wrap" style="max-height:220px"><canvas id="app-trend-chart"></canvas></div>
+        </div>
+      </div>
+      <div class="card" style="padding:0;overflow:hidden">
+        <div id="application-list-wrap"></div>
+      </div>
+    </div>
+    <div id="application-detail-page" class="detail-page" style="display:none"></div>`;
+  setSidebarActive("app-list");
+  loadApplicationList();
+  loadApplicationCharts();
+}
+
+function renderSchedulingPage() {
+  document.getElementById("main-content").innerHTML = `
+    <div class="page-header">
+      <h1>Scheduling</h1><p>Resource allocations and calendar</p>
+    </div>
+    <div id="alloc-section">
+      <div class="card">
+        <div class="flex-between" style="margin-bottom:16px">
+          <strong style="font-size:15px;color:#3e5148">Allocation Calendar</strong>
+          <div class="view-toggle">
+            <button id="btn-list-view" onclick="switchAllocView('list')">List</button>
+            <button id="btn-cal-view" class="active" onclick="switchAllocView('calendar')">Calendar</button>
+          </div>
+        </div>
+        <div id="alloc-list-wrap"></div>
+      </div>
+    </div>`;
+  setSidebarActive("sch-alloc");
+  loadScheduling();
+}
+
+function renderUsageRecordsPage() {
+  document.getElementById("main-content").innerHTML = `
+    <div class="page-header">
+      <h1>Usage Records</h1><p>Track all equipment and facility usage</p>
+    </div>
+    <div class="card" style="padding:0;overflow:hidden">
+      <div id="usage-records-list-wrap"></div>
+    </div>`;
+  setSidebarActive("usage-records-list");
+  loadUsageRecords();
+}
+
+function renderBillingPage() {
+  document.getElementById("main-content").innerHTML = `
+    <div class="page-header">
+      <h1>Billing</h1><p>Charges, payments, and budget tracking</p>
+    </div>
+    <div id="billing-charges-page">
+      <div id="billing-charges-list-page" class="list-page">
+        <div class="filter-bar">
+          <select id="bill-status-filter" onchange="filterCharges()">
+            <option value="">All Statuses</option>
+          </select>
+          <select id="bill-category-filter" onchange="filterCharges()">
+            <option value="">All Categories</option>
+          </select>
+        </div>
+        <div class="card" style="padding:0;overflow:hidden">
+          <div style="padding:16px 24px;border-bottom:1px solid #d8dfd2">
+            <strong style="font-size:15px;color:#3e5148">Charges</strong>
+          </div>
+          <div id="charges-list-wrap"></div>
+        </div>
+      </div>
+      <div id="charge-detail-page" class="detail-page" style="display:none"></div>
+    </div>
+    <div id="billing-budget-page" style="display:none">
+      <div class="page-header"><h1>Budget Overview</h1><p>Funding source utilization and remaining balance</p></div>
+      <div id="budget-wrap"></div>
+    </div>`;
+  setSidebarActive("bill-charges");
+  loadBilling();
+}
+
+// ── Toast ────────────────────────────────────────────────────────────────────
+
+let _toastTimer = null;
+function showToast(msg, type = "success") {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.style.display = "block";
+  t.style.background = type === "error" ? "#6f5c3b" : "#3e5148";
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { t.style.display = "none"; }, 3000);
+}
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+document.getElementById("initial-loading").style.display = "none";
+navigateTo("home");
+
+</script>
+</body>
+</html>

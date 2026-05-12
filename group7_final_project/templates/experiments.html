@@ -1,0 +1,202 @@
+<script>
+let _currentExperimentId = null;
+let _experimentItems = [];
+
+async function loadExperimentList() {
+  const wrap = document.getElementById("experiment-list-wrap");
+  showLoading(wrap);
+  try {
+    const items = await get("/api/experiments");
+    _experimentItems = items;
+    renderExperimentTable(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+function renderExperimentTable(items, wrap) {
+  if (!items.length) { wrap.innerHTML = `<div class="empty-state"><p>No experiments found.</p></div>`; return; }
+  wrap.innerHTML = `
+    <div class="record-grid experiment-grid">
+      ${items.map(r => `
+        <button class="record-card experiment-card" onclick="loadExperimentDetail(${r.experiment_id})">
+          <div class="record-card-top">
+            <span class="record-id">#${r.experiment_id}</span>
+            ${statusBadge(r.status)}
+          </div>
+          <strong class="record-title">${r.title}</strong>
+          <p class="experiment-intro">${experimentIntro(r.title)}</p>
+          <span class="record-action">Open experiment</span>
+        </button>`).join("")}
+    </div>`;
+}
+
+async function filterExperiments() {
+  const status = document.getElementById("exp-status-filter").value;
+  const query = (document.getElementById("exp-name-search")?.value || "").trim().toLowerCase();
+  const wrap = document.getElementById("experiment-list-wrap");
+  showLoading(wrap);
+  try {
+    const params = status ? `?status=${status}` : "";
+    _experimentItems = await get(`/api/experiments${params}`);
+    const items = query
+      ? _experimentItems.filter(r => (r.title || "").toLowerCase().includes(query))
+      : _experimentItems;
+    renderExperimentTable(items, wrap);
+  } catch (e) { showError(wrap, e.message); }
+}
+
+function experimentIntro(title = "") {
+  const t = title.toLowerCase();
+  if (t.includes("cancer") || t.includes("tumor")) return "A focused study exploring biological signals that may improve cancer detection, treatment, or monitoring.";
+  if (t.includes("protein") || t.includes("enzyme")) return "A molecular investigation into how proteins behave, interact, and shape experimental outcomes.";
+  if (t.includes("gene") || t.includes("genomic") || t.includes("dna")) return "A genetics-oriented project examining how inherited information influences measurable research patterns.";
+  if (t.includes("cell") || t.includes("stem")) return "A cellular study tracing how living systems respond, adapt, and develop under controlled conditions.";
+  if (t.includes("material") || t.includes("polymer") || t.includes("nan")) return "A materials research effort testing structure, performance, and stability at fine experimental scales.";
+  if (t.includes("climate") || t.includes("environment")) return "An environmental study connecting measured conditions with broader patterns of change and impact.";
+  if (t.includes("brain") || t.includes("neural") || t.includes("imaging")) return "A neuroscience experiment using careful observation to understand structure, activity, and response.";
+  if (t.includes("drug") || t.includes("therapy") || t.includes("treatment")) return "A translational study evaluating how a proposed intervention performs across defined research conditions.";
+  return "A research investigation designed to turn a focused scientific question into structured evidence.";
+}
+
+async function loadExperimentDetail(id) {
+  _currentExperimentId = id;
+  showExperimentDetailView();
+  const panel = document.getElementById("experiment-detail-page");
+  panel.innerHTML = `<div class="loading"><span class="spinner"></span>Loading…</div>`;
+  try {
+    const r = await get(`/api/experiments/${id}`);
+    panel.innerHTML = `
+      <div class="detail-toolbar">
+        <button class="btn btn-secondary btn-sm" onclick="showExperimentListView()">← Back to Experiments</button>
+        <div class="breadcrumb">Experiments / ${r.title}</div>
+      </div>
+      <div class="page-header">
+        <h1>${r.title}</h1>
+        <p>${statusBadge(r.status)}</p>
+      </div>
+      ${r.description ? `<p class="text-muted" style="margin-bottom:20px">${esc(r.description)}</p>` : ""}
+
+      <div class="card">
+        <div class="flex-between" style="margin-bottom:12px">
+          <div class="card-title" style="margin-bottom:0">Phase Timeline</div>
+          <button class="btn btn-secondary btn-sm" onclick="addExperimentPhase(${r.experiment_id}, ${r.phases.length && r.phases[r.phases.length-1].phase_end_date ? `'${r.phases[r.phases.length-1].phase_end_date}'` : 'null'})">+ Add Phase</button>
+        </div>
+        ${r.phases.length ? `
+          <ul class="timeline phase-timeline">
+            ${r.phases.map((p, i) => {
+              const prevEnd   = i > 0 && r.phases[i-1].phase_end_date   ? `'${r.phases[i-1].phase_end_date}'`   : 'null';
+              const nextStart = i < r.phases.length - 1 && r.phases[i+1].phase_start_date ? `'${r.phases[i+1].phase_start_date}'` : 'null';
+              return `
+              <li>
+                <div class="timeline-dot">${i + 1}</div>
+                <div class="timeline-body">
+                  <strong>Phase ${i + 1}</strong>
+                  <span>${fmtDate(p.phase_start_date)} → ${fmtDate(p.phase_end_date)}</span>
+                  <div class="phase-edit-row">
+                    <input type="date" id="phase-${p.phase_id}-start" value="${p.phase_start_date ?? ""}">
+                    <input type="date" id="phase-${p.phase_id}-end" value="${p.phase_end_date ?? ""}">
+                    <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); updateExperimentPhase(${r.experiment_id}, ${p.phase_id}, ${prevEnd}, ${nextStart})">Save</button>
+                    <button class="btn btn-danger btn-sm" onclick="event.stopPropagation(); deleteExperimentPhase(${r.experiment_id}, ${p.phase_id})">Delete</button>
+                  </div>
+                </div>
+              </li>`;
+            }).join("")}
+          </ul>` : `<p class="text-muted">No phases defined.</p>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Team Members (${r.team.length})</div>
+        ${r.team.length ? `
+          <table class="data-table">
+            <thead><tr><th>Name</th><th>Email</th><th>Institution</th><th>Role</th></tr></thead>
+            <tbody>${r.team.map(m => `<tr class="no-hover">
+              <td><strong>${m.full_name}</strong></td>
+              <td class="text-muted">${fmt(m.email)}</td>
+              <td>${fmt(m.institution)}</td>
+              <td>${statusBadge(m.occupation_type)}</td>
+            </tr>`).join("")}</tbody>
+          </table>` : `<p class="text-muted">No team members assigned.</p>`}
+      </div>
+
+      <div class="card">
+        <div class="card-title">Related Applications (${r.applications.length})</div>
+        ${r.applications.length ? `
+          <table class="data-table">
+            <thead><tr><th>ID</th><th>Type</th><th>Submitted</th><th>Dates</th><th>Result</th></tr></thead>
+            <tbody>${r.applications.map(a => `
+              <tr onclick="navigateTo('applications'); loadApplicationDetail(${a.application_id})">
+                <td class="text-muted">#${a.application_id}</td>
+                <td>${statusBadge(a.application_type)}</td>
+                <td>${fmtDate(a.submit_time)}</td>
+                <td>${fmtDate(a.required_start_date)} → ${fmtDate(a.required_end_date)}</td>
+                <td>${statusBadge(a.application_result ?? "pending")}</td>
+              </tr>`).join("")}
+            </tbody>
+          </table>` : `<p class="text-muted">No applications linked.</p>`}
+      </div>`;
+  } catch (e) { showError(panel, e.message); }
+}
+
+function showExperimentDetailView() {
+  document.getElementById("experiment-list-page").style.display = "none";
+  document.getElementById("experiment-detail-page").style.display = "";
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function showExperimentListView() {
+  document.getElementById("experiment-detail-page").style.display = "none";
+  document.getElementById("experiment-list-page").style.display = "";
+  _currentExperimentId = null;
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function addExperimentPhase(experimentId, prevEndDate) {
+  const hint = prevEndDate ? ` (must be ≥ ${prevEndDate})` : "";
+  const start = prompt(`Phase start date (YYYY-MM-DD)${hint}:`);
+  if (!start) return;
+  if (prevEndDate && start < prevEndDate)
+    return alert(`Start date cannot be before the previous phase end date (${prevEndDate}).`);
+  const end = prompt("Phase end date (YYYY-MM-DD):");
+  if (!end) return;
+  if (end < start) return alert("End date must be on or after start date.");
+  try {
+    await post(`/api/experiments/${experimentId}/phases`, {
+      phase_start_date: start,
+      phase_end_date: end,
+    });
+    await loadExperimentDetail(experimentId);
+    await filterExperiments();
+    showToast("Phase added successfully.");
+  } catch (e) { alert("Error: " + e.message); }
+}
+
+async function updateExperimentPhase(experimentId, phaseId, prevEnd, nextStart) {
+  const start = document.getElementById(`phase-${phaseId}-start`)?.value;
+  const end = document.getElementById(`phase-${phaseId}-end`)?.value;
+  const revert = () => loadExperimentDetail(experimentId);
+  if (!start || !end) { alert("Please enter both start and end dates."); return revert(); }
+  if (end < start) { alert("End date must be on or after start date."); return revert(); }
+  if (prevEnd && start < prevEnd) { alert(`Start date cannot be before previous phase end date (${prevEnd}).`); return revert(); }
+  if (nextStart && end > nextStart) { alert(`End date cannot be after next phase start date (${nextStart}).`); return revert(); }
+  try {
+    await put(`/api/experiments/${experimentId}/phases/${phaseId}`, {
+      phase_start_date: start,
+      phase_end_date: end,
+    });
+    await loadExperimentDetail(experimentId);
+    showToast("Phase updated successfully.");
+  } catch (e) {
+    alert("Error: " + e.message);
+    await loadExperimentDetail(experimentId);
+  }
+}
+
+async function deleteExperimentPhase(experimentId, phaseId) {
+  if (!confirm(`Delete Phase ${phaseId}?`)) return;
+  try {
+    await del(`/api/experiments/${experimentId}/phases/${phaseId}`);
+    await loadExperimentDetail(experimentId);
+    await filterExperiments();
+    showToast("Phase deleted successfully.");
+  } catch (e) { alert("Error: " + e.message); }
+}
+</script>

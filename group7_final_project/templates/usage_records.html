@@ -1,0 +1,108 @@
+<script>
+let _usageRecords = [];
+let _usageFilters = {
+  startDate: "2024-01-01",
+  endDate: "",
+  equipment: "",
+  facility: "",
+};
+
+async function loadUsageRecords() {
+  const wrap = document.getElementById("usage-records-list-wrap");
+  showLoading(wrap);
+  try {
+    const data = await get("/api/scheduling/usage");
+    _usageRecords = data;
+    renderUsageRecordsTable(data, wrap);
+  } catch (e) {
+    showError(wrap, e.message);
+  }
+}
+
+function filterUsageRecords() {
+  _usageFilters.startDate = document.getElementById("usage-start-filter")?.value || "";
+  _usageFilters.endDate = document.getElementById("usage-end-filter")?.value || "";
+  _usageFilters.equipment = document.getElementById("usage-eq-filter")?.value || "";
+  _usageFilters.facility = document.getElementById("usage-facility-filter")?.value || "";
+
+  let filtered = _usageRecords;
+  if (_usageFilters.startDate) {
+    filtered = filtered.filter(r => fmtDate(r.start_time) >= _usageFilters.startDate);
+  }
+  if (_usageFilters.endDate) {
+    filtered = filtered.filter(r => fmtDate(r.start_time) <= _usageFilters.endDate);
+  }
+  if (_usageFilters.equipment) {
+    filtered = filtered.filter(r => r.equipment_name === _usageFilters.equipment);
+  }
+  if (_usageFilters.facility) {
+    filtered = filtered.filter(r => r.facility_name === _usageFilters.facility);
+  }
+
+  const wrap = document.getElementById("usage-records-list-wrap");
+  renderUsageRecordsTable(filtered, wrap);
+}
+
+function resetUsageFilters() {
+  _usageFilters = { startDate: "2025-01-01", endDate: "", equipment: "", facility: "" };
+  const wrap = document.getElementById("usage-records-list-wrap");
+  renderUsageRecordsTable(_usageRecords, wrap);
+}
+
+function usageOption(value, selectedValue) {
+  const selected = value === selectedValue ? " selected" : "";
+  return `<option value="${value}"${selected}>${value}</option>`;
+}
+
+function renderUsageRecordsTable(items, wrap) {
+  // Get unique values for filters from all records so options stay stable while filtering.
+  const equipmentList = [...new Set(_usageRecords.map(r => r.equipment_name).filter(Boolean))].sort();
+  const facilityList = [...new Set(_usageRecords.map(r => r.facility_name).filter(Boolean))].sort();
+
+  const html = `
+    <div class="list-toolbar">
+      <strong>Usage Records</strong>
+      <div class="filter-bar" style="margin-bottom:0">
+        <input id="usage-start-filter" type="date" lang="en" aria-label="Start Date"
+               title="Start Date" value="${_usageFilters.startDate}"
+               onchange="filterUsageRecords()">
+        <input id="usage-end-filter" type="date" lang="en" aria-label="End Date"
+               title="End Date" value="${_usageFilters.endDate}"
+               onchange="filterUsageRecords()">
+        <select id="usage-eq-filter" onchange="filterUsageRecords()">
+          <option value=""${_usageFilters.equipment ? "" : " selected"}>All Equipment</option>
+          ${equipmentList.map(e => usageOption(e, _usageFilters.equipment)).join("")}
+        </select>
+        <select id="usage-facility-filter" onchange="filterUsageRecords()">
+          <option value=""${_usageFilters.facility ? "" : " selected"}>All Facilities</option>
+          ${facilityList.map(f => usageOption(f, _usageFilters.facility)).join("")}
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="resetUsageFilters()">Reset</button>
+        <span class="text-muted" style="font-size:12px;white-space:nowrap">Data: 2024 – 2025</span>
+      </div>
+    </div>
+    ${items.length ? `
+      <div class="usage-record-list">
+        ${items.map(r => `<article class="usage-record-row">
+          <div class="usage-row-main">
+            <div class="usage-row-top">
+              <strong class="usage-row-title">${fmt(r.equipment_name)}</strong>
+              ${statusBadge(r.usage_status)}
+            </div>
+            <div class="usage-row-details">
+              <span>Quantity: ${fmt(r.quantity)}</span>
+              <span>Facility: ${fmt(r.facility_name)}</span>
+              <span>User: ${fmt(r.user_name)}</span>
+              <span>Experiment: ${fmt(r.experiment_title)}</span>
+              <span>Start: ${fmtDate(r.start_time)}</span>
+              <span>End: ${fmtDate(r.end_time)}</span>
+              <span>Issuer Type: ${statusBadge(r.issuer_type)}</span>
+              ${r.credential_provider ? `<span>Credential Provider: ${r.credential_provider}</span>` : ""}
+            </div>
+          </div>
+        </article>`).join("")}
+      </div>` : `<div class="empty-state"><p>No usage records found.</p></div>`}
+  `;
+  wrap.innerHTML = html;
+}
+</script>
